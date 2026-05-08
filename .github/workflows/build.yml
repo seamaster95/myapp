@@ -12,3 +12,9 @@ jobs:
           channel: 'stable'
       - run: flutter pub get
       - run: flutter build apk --release
+      
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-app-apk
+          path: build/app/outputs/flutter-apk/*.apk
