@@ -1,122 +1,144 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // กัปตันตรวจสอบ URL และ Anon Key ของกัปตันอีกครั้งนะครับ
+  await Supabase.initialize(
+    url: 'https://jeyqocnwodwkempuzriv.supabase.co/rest/v1/',
+    anonKey: 'sb_publishable_HXdNPamCPOEhvXcoYeJ6Xw_8I7hdFjF',
+  );
   runApp(const MyApp());
 }
+
+final supabase = Supabase.instance.client;
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'จักรพงษ์ POS',
+      theme: ThemeData(primarySwatch: Colors.orange),
+      home: const ProductListScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class ProductListScreen extends StatefulWidget {
+  const ProductListScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<ProductListScreen> createState() => _ProductListScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _ProductListScreenState extends State<ProductListScreen> {
+  List<Map<String, dynamic>> products = [];
+  bool isLoading = true;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    fetchProducts();
+  }
+
+  // 1. ดึงข้อมูลที่รวมฟิลด์ parent_id มาด้วย
+  Future<void> fetchProducts() async {
+    try {
+      final data = await supabase
+          .from('products')
+          .select(
+            'product_id, product_name, price_per_unit, quantity, parent_id, unit_call',
+          )
+          .order('product_name', ascending: true);
+
+      setState(() {
+        products = List<Map<String, dynamic>>.from(data);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error: $e');
+    }
+  }
+
+  // 2. Logic ตัดสต็อกที่ถังแม่ (Parent ID)
+  Future<void> handleSale(Map<String, dynamic> item) async {
+    // ถ้ามี parent_id ให้ไปตัดที่ ID นั้น ถ้าไม่มีให้ตัดที่ตัวเอง
+    final String targetId =
+        (item['parent_id'] != null && item['parent_id'].toString().isNotEmpty)
+        ? item['parent_id'].toString()
+        : item['product_id'].toString();
+
+    try {
+      // เช็คจำนวนล่าสุดจากเป้าหมาย
+      final response = await supabase
+          .from('products')
+          .select('quantity, product_name')
+          .eq('product_id', targetId)
+          .single();
+
+      final int currentQty = (response['quantity'] as num).toInt();
+      final String targetName = response['product_name'];
+
+      if (currentQty > 0) {
+        await supabase
+            .from('products')
+            .update({'quantity': currentQty - 1})
+            .eq('product_id', targetId);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'ขายสำเร็จ! $targetName เหลือ ${currentQty - 1} ${item['unit_call'] ?? ''}',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 1),
+            ),
+          );
+          fetchProducts(); // รีเฟรชยอดหลังขาย
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('ขออภัย: $targetName หมดแล้ว!'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      appBar: AppBar(title: const Text('PoPoSoy IT Stock - ระบบจัดการสต็อก')),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+              itemCount: products.length,
+              itemBuilder: (context, index) {
+                final item = products[index];
+                // ซ่อนตัว 'ถังแม่' ไม่ให้โชว์เป็นปุ่มขาย (ถ้ากัปตันต้องการ)
+                // หรือจะโชว์ไว้ดูสต็อกเฉยๆ ก็ได้ครับ
+                return ListTile(
+                  title: Text(item['product_name']),
+                  subtitle: Text(
+                    'ราคา: ${item['price_per_unit']} บาท | คงเหลือ: ${item['quantity']}',
+                  ),
+                  trailing: ElevatedButton(
+                    onPressed: () => handleSale(item),
+                    child: const Text('ขาย'),
+                  ),
+                );
+              },
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
