@@ -4,10 +4,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // กัปตันตรวจสอบ URL และ Anon Key ของกัปตันอีกครั้งนะครับ
+  // กัปตันตรวจสอบ URL และ Key จากหน้า Settings > API ใน Supabase นะครับ
   await Supabase.initialize(
     url: 'https://jeyqocnwodwkempuzriv.supabase.co/rest/v1/',
-    anonKey: 'sb_publishable_HXdNPamCPOEhvXcoYeJ6Xw_8I7hdFjF',
+    anonKey:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpleXFvY253b2R3a2VtcHV6cml2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NzA4NzEsImV4cCI6MjA5MzA0Njg3MX0.a_dvT5-4xmQP61EsXGxbMNRCSMJ3x8xWIPJ5ivvYap8',
   );
   runApp(const MyApp());
 }
@@ -20,125 +21,107 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'จักรพงษ์ POS',
-      theme: ThemeData(primarySwatch: Colors.orange),
-      home: const ProductListScreen(),
+      title: 'ระบบสต็อกสินค้า',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      debugShowCheckedModeBanner: false,
+      home: const AddStockPage(),
     );
   }
 }
 
-class ProductListScreen extends StatefulWidget {
-  const ProductListScreen({super.key});
+class AddStockPage extends StatefulWidget {
+  const AddStockPage({super.key});
 
   @override
-  State<ProductListScreen> createState() => _ProductListScreenState();
+  State<AddStockPage> createState() => _AddStockPageState();
 }
 
-class _ProductListScreenState extends State<ProductListScreen> {
-  List<Map<String, dynamic>> products = [];
-  bool isLoading = true;
+class _AddStockPageState extends State<AddStockPage> {
+  final _nameController = TextEditingController();
+  final _qtyController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _saveToStock() async {
+    final name = _nameController.text.trim();
+    final qtyText = _qtyController.text.trim();
+    final qty = int.tryParse(qtyText) ?? 0;
+
+    if (name.isEmpty) {
+      _showSnackBar('กรุณาระบุชื่อสินค้า');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // ส่งข้อมูลไปที่ตาราง products ใน Supabase
+      await supabase.from('products').insert({
+        'product_name': name,
+        'quantity': qty,
+      });
+
+      if (!mounted) return;
+      _showSnackBar('บันทึก "$name" เรียบร้อยแล้ว');
+      _nameController.clear();
+      _qtyController.clear();
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('เกิดข้อผิดพลาด: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
-  void initState() {
-    super.initState();
-    fetchProducts();
-  }
-
-  // 1. ดึงข้อมูลที่รวมฟิลด์ parent_id มาด้วย
-  Future<void> fetchProducts() async {
-    try {
-      final data = await supabase
-          .from('products')
-          .select(
-            'product_id, product_name, price_per_unit, quantity, parent_id, unit_call',
-          )
-          .order('product_name', ascending: true);
-
-      setState(() {
-        products = List<Map<String, dynamic>>.from(data);
-        isLoading = false;
-      });
-    } catch (e) {
-      debugPrint('Error: $e');
-    }
-  }
-
-  // 2. Logic ตัดสต็อกที่ถังแม่ (Parent ID)
-  Future<void> handleSale(Map<String, dynamic> item) async {
-    // ถ้ามี parent_id ให้ไปตัดที่ ID นั้น ถ้าไม่มีให้ตัดที่ตัวเอง
-    final String targetId =
-        (item['parent_id'] != null && item['parent_id'].toString().isNotEmpty)
-        ? item['parent_id'].toString()
-        : item['product_id'].toString();
-
-    try {
-      // เช็คจำนวนล่าสุดจากเป้าหมาย
-      final response = await supabase
-          .from('products')
-          .select('quantity, product_name')
-          .eq('product_id', targetId)
-          .single();
-
-      final int currentQty = (response['quantity'] as num).toInt();
-      final String targetName = response['product_name'];
-
-      if (currentQty > 0) {
-        await supabase
-            .from('products')
-            .update({'quantity': currentQty - 1})
-            .eq('product_id', targetId);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'ขายสำเร็จ! $targetName เหลือ ${currentQty - 1} ${item['unit_call'] ?? ''}',
-              ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 1),
-            ),
-          );
-          fetchProducts(); // รีเฟรชยอดหลังขาย
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('ขออภัย: $targetName หมดแล้ว!'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('Error: $e');
-    }
+  void dispose() {
+    _nameController.dispose();
+    _qtyController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('PoPoSoy IT Stock - ระบบจัดการสต็อก')),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: products.length,
-              itemBuilder: (context, index) {
-                final item = products[index];
-                // ซ่อนตัว 'ถังแม่' ไม่ให้โชว์เป็นปุ่มขาย (ถ้ากัปตันต้องการ)
-                // หรือจะโชว์ไว้ดูสต็อกเฉยๆ ก็ได้ครับ
-                return ListTile(
-                  title: Text(item['product_name']),
-                  subtitle: Text(
-                    'ราคา: ${item['price_per_unit']} บาท | คงเหลือ: ${item['quantity']}',
-                  ),
-                  trailing: ElevatedButton(
-                    onPressed: () => handleSale(item),
-                    child: const Text('ขาย'),
-                  ),
-                );
-              },
+      appBar: AppBar(title: const Text('เพิ่มสินค้าเข้าสต็อก')),
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'ชื่อสินค้า',
+                border: OutlineInputBorder(),
+              ),
             ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: _qtyController,
+              decoration: const InputDecoration(
+                labelText: 'จำนวน',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 25),
+            ElevatedButton(
+              onPressed: _isLoading ? null : _saveToStock,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+              ),
+              child: _isLoading
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : const Text('บันทึกข้อมูล', style: TextStyle(fontSize: 18)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
